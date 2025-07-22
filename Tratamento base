@@ -1,0 +1,125 @@
+import os
+import time
+import shutil
+import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.utils import range_boundaries, get_column_letter
+from openpyxl.worksheet.table import Table
+import warnings
+
+# Suprimir warning do openpyxl sobre estilo padrão
+warnings.filterwarnings("ignore", message="Workbook contains no default style, apply openpyxl's default")
+
+# === CONFIGURAÇÕES ===
+PASTA_MONITORADA = r"M:\Base de convites - Fornecedores"
+PASTA_PRINCIPAL = r"M:\Base de convites - Fornecedores\Base Copilot"
+PASTA_PROCESSADOS = r"M:\Base de convites - Fornecedores\Bases Atualizadas"
+NOME_TABELA = "Tabela1"
+TEMPO_ESPERA = 2
+
+
+def encontrar_excel_na_pasta(pasta):
+    if not os.path.isdir(pasta):
+        print(f"❌ O caminho '{pasta}' não é um diretório válido.")
+        return None
+    for arquivo in os.listdir(pasta):
+        if arquivo.endswith(".xlsx"):
+            return os.path.join(pasta, arquivo)
+    return None
+
+
+def copiar_para_tabela(destino_path, dados):
+    try:
+        wb = load_workbook(destino_path)
+        ws = None
+        tabela = None
+
+        for aba in wb.worksheets:
+            for nome_tabela in aba.tables:
+                tabela_obj = None
+                for tbl in getattr(aba, "_tables", []):
+                    if isinstance(tbl, Table) and tbl.name == nome_tabela:
+                        tabela_obj = tbl
+                        break
+                if tabela_obj is None:
+                    tabela_obj = aba.tables.get(nome_tabela)
+                if tabela_obj and isinstance(tabela_obj, Table):
+                    if nome_tabela == NOME_TABELA:
+                        ws = aba
+                        tabela = tabela_obj
+                        break
+            if ws:
+                break
+
+        if not tabela:
+            print(f"❌ Tabela '{NOME_TABELA}' não encontrada em nenhuma aba.")
+            return False
+
+        min_col, min_row, max_col, max_row = range_boundaries(tabela.ref)
+        for row in range(min_row + 1, max_row + 1):
+            for col in range(min_col, max_col + 1):
+                ws.cell(row=row, column=col).value = None
+
+        for i, linha in enumerate(dados.values.tolist(), start=min_row + 1):
+            for j, valor in enumerate(linha, start=min_col):
+                ws.cell(row=i, column=j).value = valor
+
+        ultima_linha = len(dados) + min_row
+        ultima_coluna = min_col + len(dados.columns) - 1
+        ultima_letra = get_column_letter(ultima_coluna)
+        tabela.ref = f"{get_column_letter(min_col)}{min_row}:{ultima_letra}{ultima_linha}"
+
+        wb.save(destino_path)
+        print(f"✅ Dados inseridos na Tabela '{NOME_TABELA}' com sucesso!")
+        return True
+
+    except Exception as e:
+        print(f"❌ Erro ao inserir dados na tabela: {e}")
+        return False
+
+
+def monitorar_pasta():
+    print(f"🕵️ Monitorando a pasta: {PASTA_MONITORADA}")
+    if not os.path.isdir(PASTA_MONITORADA):
+        print(f"❌ A pasta monitorada '{PASTA_MONITORADA}' não existe ou não é válida.")
+        return
+
+    if not os.path.exists(PASTA_PROCESSADOS):
+        os.makedirs(PASTA_PROCESSADOS)
+
+    arquivos_anteriores = set(os.listdir(PASTA_MONITORADA))
+
+    while True:
+        try:
+            arquivos_atuais = set(os.listdir(PASTA_MONITORADA))
+            novos_arquivos = arquivos_atuais - arquivos_anteriores
+
+            for novo_arquivo in novos_arquivos:
+                if novo_arquivo.endswith('.xlsx'):
+                    caminho_novo = os.path.join(PASTA_MONITORADA, novo_arquivo)
+                    print(f"🟢 Novo Excel detectado: {novo_arquivo}")
+
+                    dados = pd.read_excel(caminho_novo)
+                    destino = encontrar_excel_na_pasta(PASTA_PRINCIPAL)
+
+                    if destino:
+                        sucesso = copiar_para_tabela(destino, dados)
+                        if sucesso:
+                            caminho_destino = os.path.join(PASTA_PROCESSADOS, novo_arquivo)
+                            shutil.move(caminho_novo, caminho_destino)
+                            print(f"📁 Arquivo movido para a pasta de processados (pasta continua sendo monitorada): {caminho_destino}")
+                    else:
+                        print(f"❌ Nenhum arquivo Excel encontrado na pasta principal: {PASTA_PRINCIPAL}")
+
+            arquivos_anteriores = arquivos_atuais
+
+        except Exception as erro:
+            print(f"❌ Erro no monitoramento: {erro}")
+
+        time.sleep(TEMPO_ESPERA)
+
+
+if __name__ == "__main__":
+    monitorar_pasta()
+
+
